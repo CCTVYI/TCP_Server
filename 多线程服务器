@@ -1,0 +1,102 @@
+#include <stdio.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <errno.h>
+#include <unistd.h>
+#include <string.h>
+#include <netinet/in.h>
+#include <stdlib.h>
+
+#define _PORT_ 9999
+#define _BACKLOG_ 10
+//多线程版本，多个进行通信。用户越多，性能越低，一个线程挂掉，进程也会挂掉。
+
+void Request(int client_fd,struct sockaddr_in *client_socket)
+{
+	char buf[1024];
+	for(;;)
+	{
+		ssize_t read_size=read(client_fd,buf,sizeof(buf));
+		if(read_size<0)
+		{
+			perror("read");
+			continue;
+		}
+		else if(read_size==0)
+		{
+			printf("client:%s quit!\n",inet_ntoa(client_socket->sin_addr));
+			close(client_fd);
+			break;
+		}
+		else
+		{
+			buf[read_size]='\0';
+			printf("client:%s say:%s\n",inet_ntoa(client_socket->sin_addr),buf);
+			write(client_fd,buf,strlen(buf));
+		}
+	}
+}
+
+typedef struct Arg
+{
+	int fd;
+	struct sockaddr_in addr;
+}Arg;
+
+void *CreateWorker(void *ptr)
+{
+
+	Arg* arg=(Arg*)ptr;
+	Request(arg->fd,&arg->addr);
+	free(arg);
+	arg=NULL;
+}
+
+int main()
+{
+	int sock=socket(AF_INET,SOCK_STREAM,0); //拉客
+	if(sock<0)
+	{
+		printf("create sock error,error is :%d,errstring is :%s\n",errno,strerror(errno));
+	}
+	struct sockaddr_in server_socket;
+	bzero(&server_socket,sizeof(server_socket));  //结构体初始化
+	server_socket.sin_family=AF_INET;
+	server_socket.sin_port=htons(_PORT_);
+	server_socket.sin_addr.s_addr=htonl(INADDR_ANY);  //是一个宏表示本地的任意IP地址，里面放的全是0
+	//只要是发往本台服务器上的任意IP地址，数据都可以进行接收处理。
+
+	if(bind(sock,(struct sockaddr*)&server_socket,sizeof(struct sockaddr_in))<0)
+	{
+		printf("create bind error,error is %d,errstring is %s\n",errno,strerror(errno));
+		close(sock);
+		return 1;
+	}
+
+	if(listen(sock,_BACKLOG_)<0)  //等待队列设为5-10为宜
+	{
+		printf("create listen is error,error is %d,errstring is %s\n",errno,strerror(errno));
+		close(sock);
+		return 2;
+	}
+	printf("bind and listen is success,wait accept...\n");
+	
+	for(;;)
+	{
+		struct sockaddr_in client_socket;
+		socklen_t len=sizeof(client_socket);
+		int client_sock=accept(sock,(struct sockaddr*)&client_socket,&len);  //服务员，真正提供服务的，阻塞式等待用户。也是fd
+		if(client_sock<0)
+		{
+			printf("create client_sock is error,error is %d,errstring is %s\n",errno,strerror(errno));
+			continue;
+		}
+		pthread_t tid=0;
+		Arg* arg=(Arg*)malloc(sizeof(Arg));
+		arg->fd=client_sock;
+		arg->addr=client_socket;
+		pthread_create(&tid,NULL,CreateWorker,(void*)arg);
+		pthread_detach(tid);
+	}
+	return 0;
+}
