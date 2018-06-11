@@ -1,0 +1,80 @@
+#include <stdio.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <errno.h>
+#include <unistd.h>
+#include <string.h>
+#include <netinet/in.h>
+
+#define _PORT_ 9999
+#define _BACKLOG_ 10
+//单进程版本，一次只能一个进行通信。
+
+
+int main()
+{
+	int sock=socket(AF_INET,SOCK_STREAM,0); //拉客
+	if(sock<0)
+	{
+		printf("create sock error,error is :%d,errstring is :%s\n",errno,strerror(errno));
+	}
+	struct sockaddr_in server_socket;
+	struct sockaddr_in client_socket;
+	bzero(&server_socket,sizeof(server_socket));  //结构体初始化
+	server_socket.sin_family=AF_INET;
+	server_socket.sin_port=htons(_PORT_);
+	server_socket.sin_addr.s_addr=htonl(INADDR_ANY);  //是一个宏表示本地的任意IP地址，里面放的全是0
+	//只要是发往本台服务器上的任意IP地址，数据都可以进行接收处理。
+
+	if(bind(sock,(struct sockaddr*)&server_socket,sizeof(struct sockaddr_in))<0)
+	{
+		printf("create bind error,error is %d,errstring is %s\n",errno,strerror(errno));
+		close(sock);
+		return 1;
+	}
+
+	if(listen(sock,_BACKLOG_)<0)  //等待队列设为5-10为宜
+	{
+		printf("create listen is error,error is %d,errstring is %s\n",errno,strerror(errno));
+		close(sock);
+		return 2;
+	}
+	printf("bind and listen is success,wait accept...\n");
+	
+	for(;;)
+	{
+		socklen_t len=0;
+		int client_sock=accept(sock,(struct sockaddr*)&client_socket,&len);  //服务员，真正提供服务的，阻塞式等待用户。
+		//accept了一个请求后，就一直while循环read，没有继续调用accept，导致不能接受新请求。
+
+		if(client_sock<0)
+		{
+			printf("create client_sock is error,error is %d,errstring is %s\n",errno,strerror(errno));
+			close(sock);
+			return 3;
+		}
+
+		char buf_ip[INET_ADDRSTRLEN];  //存放客户的IP地址
+		memset(buf_ip,0,sizeof(buf_ip));
+		inet_ntop(AF_INET,&client_socket.sin_addr,buf_ip,sizeof(buf_ip));  //IP地址转换为字符串
+		printf("get connect,ip is :%s port is %d\n",buf_ip,ntohs(client_socket.sin_port));
+		while(1)
+		{
+			char buf[1024];
+			memset(buf,0,sizeof(buf));
+
+			read(client_sock,buf,sizeof(buf));  //从套接字里读
+			printf("client:#%s\n",buf);
+
+			printf("server:$");
+
+			memset(buf,0,sizeof(buf)); 
+			fgets(buf,sizeof(buf),stdin);  //获取一行输入
+			buf[strlen(buf)-1]='\0';       //过滤掉换行符
+			write(client_sock,buf,sizeof(buf));  //往套接字里写
+			printf("please wait\n");
+		}
+		close(sock);
+	}
+	return 0;
+}
